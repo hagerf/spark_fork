@@ -3903,6 +3903,15 @@ object functions {
   def array_min(e: Column): Column = withExpr { ArrayMin(e.expr) }
 
   /**
+   * Returns the median value in the array. Array must contain numeric values and no nulls.
+   * Returns null for empty arrays.
+   *
+   * @group collection_funcs
+   * @since 2.4.0
+   */
+  def array_median(e: Column): Column = withExpr { ArrayMedian(e.expr) }
+
+  /**
    * Returns the maximum value in the array.
    *
    * @group collection_funcs

@@ -884,6 +884,36 @@ class DataFrameFunctionsSuite extends QueryTest with SharedSparkSession {
     checkAnswer(df.selectExpr("array_min(a)"), answer)
   }
 
+  test("array_median function") {
+    val doubles = Seq(
+      Seq(1.0, 3.0, 2.0).map(Option.apply),
+      Seq(Some(1.2), Some(-100.0), Some(2.5), Option.empty[Double]),
+      Seq(6.0, 2.0, 3.0, 5.0, 4.0, 1.0).map(Option.apply),
+      Seq.empty[Option[Double]]
+    ).toDF("a")
+
+    val answerDoubles = Seq(Row(2.0), Row(1.2), Row(3.5), Row(null))
+
+    val ints = Seq(
+      Seq(1, 3, 2),
+      Seq(1, -100, 2)
+    ).toDF("a")
+
+    val longs = Seq(
+      Seq(1L, 3L, 2L),
+      Seq(1L, -100L, 2L)
+    ).toDF("a")
+
+    val answerLongAndInt = Seq(Row(2.0), Row(1.0))
+
+    checkAnswer(doubles.select(array_median(doubles("a"))), answerDoubles)
+    checkAnswer(doubles.selectExpr("array_median(a)"), answerDoubles)
+    checkAnswer(ints.select(array_median(ints("a"))), answerLongAndInt)
+    checkAnswer(ints.selectExpr("array_median(a)"), answerLongAndInt)
+    checkAnswer(longs.select(array_median(longs("a"))), answerLongAndInt)
+    checkAnswer(longs.selectExpr("array_median(a)"), answerLongAndInt)
+  }
+
   test("array_max function") {
     val df = Seq(
       Seq[Option[Int]](Some(1), Some(3), Some(2)),

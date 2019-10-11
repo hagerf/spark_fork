@@ -18,10 +18,8 @@ package org.apache.spark.sql.catalyst.expressions
 
 import java.time.ZoneId
 import java.util.Comparator
-
 import scala.collection.mutable
 import scala.reflect.ClassTag
-
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.{TypeCheckResult, TypeCoercion}
 import org.apache.spark.sql.catalyst.expressions.ArraySortLike.NullOrder
@@ -37,6 +35,7 @@ import org.apache.spark.unsafe.array.ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH
 import org.apache.spark.unsafe.types.{ByteArray, UTF8String}
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.collection.OpenHashSet
+import scala.reflect.runtime.universe
 
 /**
  * Base trait for [[BinaryExpression]]s with two arrays of the same element type and implicit
@@ -898,6 +897,88 @@ case class SortArray(base: Expression, ascendingOrder: Expression)
   }
 
   override def prettyName: String = "sort_array"
+}
+
+/**
+ * Returns the median value as double of an array of numeric values.
+ */
+@ExpressionDescription(
+usage = """
+_FUNC_(array) - Returns the median value in the array, but only accepts arrays with numeric values.
+  NULL elements are skipped and returns NULL if array is empty.""",
+examples = """
+    Examples:
+      > SELECT _FUNC_(array(1, 2, null, 3));
+       2
+  """, since = "3.0.0")
+case class ArrayMedian(child: Expression) extends UnaryExpression with ImplicitCastInputTypes {
+
+  override def checkInputDataTypes(): TypeCheckResult = child.dataType match {
+    case ArrayType(dt, _) => dt match {
+      case _: NumericType => TypeCheckResult.TypeCheckSuccess
+      case _ => TypeCheckResult.TypeCheckFailure(
+        s"$prettyName does not support arrays of type ${dt.catalogString} which is not numeric.")
+    }
+    case _ =>
+      TypeCheckResult.TypeCheckFailure(s"$prettyName only supports array input.")
+  }
+
+  override def inputTypes: Seq[AbstractDataType] = Seq(ArrayType)
+
+  private def containsNulls: Boolean = child.dataType.asInstanceOf[ArrayType].containsNull
+
+  private def assignArrayCodeGen(array: String, ctx: CodegenContext, c: String): String = {
+    val javaType = CodeGenerator.javaType(arrayType)
+    val primitiveTypeName = CodeGenerator.primitiveTypeName(arrayType)
+
+    if(containsNulls) {
+      val numElements = ctx.freshName("numElements")
+      val tempArray = ctx.freshName("tempArray")
+      val count = ctx.freshName("count")
+      val i = ctx.freshName("i")
+
+      s"""
+         |int $numElements = $c.numElements();
+         |$javaType[] $tempArray = new $javaType[$numElements];
+         |int $count = -1;
+         |for (int $i = 0; $i < $numElements; $i++) {
+         |  if(!$c.isNullAt($i)) {
+         |    $tempArray[++$count] = $c.get$primitiveTypeName($i);
+         |  }
+         |}
+         |$javaType[] $array = java.util.Arrays.copyOf($tempArray, $count + 1);
+       """.stripMargin
+    } else {
+      s"""
+         |$javaType[] $array = $c.to${primitiveTypeName}Array();
+         """.stripMargin
+    }
+  }
+
+  override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+    val size = ctx.freshName("size")
+    val array = ctx.freshName("array")
+
+    nullSafeCodeGen(ctx, ev, c =>
+    s"""
+       |${assignArrayCodeGen(array, ctx, c)}
+       |java.util.Arrays.sort($array);
+       |final int $size = $array.length;
+       |if ($size == 0) {
+       |  ${ev.isNull} = true;
+       |} else if ($size % 2 == 0) {
+       |  ${ev.value} = ($array[$size / 2] + $array[$size / 2 - 1]) / 2d;
+       |} else {
+       |   ${ev.value} = $array[$size / 2] / 1d;
+       |}
+       """.stripMargin)
+  }
+
+  @transient override val dataType: DataType = DoubleType
+
+  private val arrayType: DataType = child.dataType.asInstanceOf[ArrayType].elementType
+
+  override def prettyName: String = "array_median"
 }
 
 
